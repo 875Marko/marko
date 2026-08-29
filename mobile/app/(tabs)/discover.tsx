@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/src/theme';
 import { ApiError, DiscoverApi } from '@/src/api/client';
@@ -12,6 +13,7 @@ type Spot = Awaited<ReturnType<typeof DiscoverApi.list>>['spots'][number];
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const router = useRouter();
   const [spots, setSpots] = useState<Spot[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -52,6 +54,7 @@ export default function DiscoverScreen() {
             subtitle={item.hunter_username ? `spotted by @${item.hunter_username}` : item.country}
             rarity={item.rarity}
             points={item.points}
+            onPress={() => router.push(`/profile/${item.user_id}`)}
           />
         )}
         ListEmptyComponent={

@@ -520,6 +520,43 @@ async def get_atlas(user: dict = Depends(get_current_user)):
     }
 
 
+GLOBE_PIN_PROJECTION = {
+    "_id": 0, "scan_id": 1, "user_id": 1, "make": 1, "model": 1,
+    "rarity": 1, "latitude": 1, "longitude": 1, "country": 1, "created_at": 1,
+}
+GLOBE_PIN_LIMIT = 300
+
+
+@api_router.get("/atlas/globe")
+async def atlas_globe(user: dict = Depends(get_current_user)):
+    """Located scans for the globe view: the current user's pins plus their
+    friends' pins, so a viewer can see where their circle has been spotting."""
+    mine = await db.scans.find(
+        {"user_id": user["user_id"], "latitude": {"$ne": None}, "longitude": {"$ne": None}},
+        GLOBE_PIN_PROJECTION,
+    ).sort("created_at", -1).limit(GLOBE_PIN_LIMIT).to_list(GLOBE_PIN_LIMIT)
+
+    friend_ids = user.get("friends") or []
+    friends_pins = []
+    if friend_ids:
+        friends_pins = await db.scans.find(
+            {"user_id": {"$in": friend_ids}, "latitude": {"$ne": None}, "longitude": {"$ne": None}},
+            GLOBE_PIN_PROJECTION,
+        ).sort("created_at", -1).limit(GLOBE_PIN_LIMIT).to_list(GLOBE_PIN_LIMIT)
+
+        friend_user_ids = list({p["user_id"] for p in friends_pins})
+        friend_users = await db.users.find(
+            {"user_id": {"$in": friend_user_ids}}, {"_id": 0, "user_id": 1, "username": 1, "name": 1}
+        ).to_list(200)
+        by_id = {u["user_id"]: u for u in friend_users}
+        for p in friends_pins:
+            u = by_id.get(p["user_id"], {})
+            p["username"] = u.get("username")
+            p["name"] = u.get("name")
+
+    return {"mine": mine, "friends": friends_pins}
+
+
 # ============== Spot of the Week ==============
 def _week_key(d: datetime) -> str:
     iso = d.astimezone(timezone.utc).isocalendar()
@@ -701,11 +738,10 @@ async def country_detail(code: str, user: dict = Depends(get_current_user)):
     }
 
 
-@api_router.get("/profile/stats")
-async def profile_stats(user: dict = Depends(get_current_user)):
-    uid = user["user_id"]
-    # rarity breakdown
-    rb_pipe = [{"$match": {"user_id": uid}}, {"$group": {"_id": "$rarity", "count": {"$sum": 1}}}]
+async def _profile_stats_for(user_id: str, member_since: Optional[datetime]) -> dict:
+    """Shared by /profile/stats (self) and /profile/public/{user_id} so viewing
+    someone else's profile carries the same depth as your own."""
+    rb_pipe = [{"$match": {"user_id": user_id}}, {"$group": {"_id": "$rarity", "count": {"$sum": 1}}}]
     rb_rows = await db.scans.aggregate(rb_pipe).to_list(20)
     rarity_breakdown = {k: 0 for k in RARITY_POINTS.keys()}
     for r in rb_rows:
@@ -714,7 +750,7 @@ async def profile_stats(user: dict = Depends(get_current_user)):
 
     def _top(field):
         return [
-            {"$match": {"user_id": uid, field: {"$nin": [None, "", "Unknown"]}}},
+            {"$match": {"user_id": user_id, field: {"$nin": [None, "", "Unknown"]}}},
             {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
             {"$limit": 1},
@@ -729,13 +765,13 @@ async def profile_stats(user: dict = Depends(get_current_user)):
     top_color = await _one("color")
     top_origin = await _one("country_origin")
 
-    countries_count = len(await db.scans.distinct("country", {"user_id": uid, "country": {"$nin": [None, ""]}}))
-    badge_count = await db.spot_winners.count_documents({"user_id": uid})
-    achievement_count = await db.achievement_completions.count_documents({"user_id": uid})
+    countries_count = len(await db.scans.distinct("country", {"user_id": user_id, "country": {"$nin": [None, ""]}}))
+    badge_count = await db.spot_winners.count_documents({"user_id": user_id})
+    achievement_count = await db.achievement_completions.count_documents({"user_id": user_id})
 
     # Best scan (highest rarity, then most recent)
     best_rows = await db.scans.aggregate([
-        {"$match": {"user_id": uid}},
+        {"$match": {"user_id": user_id}},
         {"$addFields": {"r_order": {"$indexOfArray": [["common", "uncommon", "rare", "epic", "legendary"], "$rarity"]}}},
         {"$sort": {"r_order": -1, "created_at": -1}},
         {"$limit": 1},
@@ -745,22 +781,15 @@ async def profile_stats(user: dict = Depends(get_current_user)):
 
     # Bonus points from achievements (sum of bonuses)
     bonus_rows = await db.achievement_completions.aggregate([
-        {"$match": {"user_id": uid}},
+        {"$match": {"user_id": user_id}},
         {"$group": {"_id": None, "sum": {"$sum": "$bonus"}}},
     ]).to_list(1)
     bonus_points_total = int(bonus_rows[0]["sum"]) if bonus_rows else 0
 
-    # Scans remaining today
-    now = datetime.now(timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_count = await db.scans.count_documents({"user_id": uid, "created_at": {"$gte": day_start}})
-    scans_remaining_today = max(0, DAILY_SCAN_LIMIT - today_count)
-
-    member_since = user.get("created_at")
     days_since = None
     if member_since:
         ms = member_since if member_since.tzinfo else member_since.replace(tzinfo=timezone.utc)
-        days_since = max(1, (now - ms).days + 1)
+        days_since = max(1, (datetime.now(timezone.utc) - ms).days + 1)
 
     return {
         "rarity_breakdown": rarity_breakdown,
@@ -773,10 +802,21 @@ async def profile_stats(user: dict = Depends(get_current_user)):
         "achievement_count": achievement_count,
         "best_scan": best_scan,
         "bonus_points_total": bonus_points_total,
-        "scans_remaining_today": scans_remaining_today,
-        "daily_limit": DAILY_SCAN_LIMIT,
         "days_since_joined": days_since,
     }
+
+
+@api_router.get("/profile/stats")
+async def profile_stats(user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    stats = await _profile_stats_for(uid, user.get("created_at"))
+
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_count = await db.scans.count_documents({"user_id": uid, "created_at": {"$gte": day_start}})
+    scans_remaining_today = max(0, DAILY_SCAN_LIMIT - today_count)
+
+    return {**stats, "scans_remaining_today": scans_remaining_today, "daily_limit": DAILY_SCAN_LIMIT}
 
 
 @api_router.get("/profile/public/{user_id}")
@@ -784,14 +824,8 @@ async def public_profile(user_id: str, user: dict = Depends(get_current_user)):
     target = await db.users.find_one({"user_id": user_id}, {"_id": 0, "password_hash": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Player not found")
-    countries_count = len(await db.scans.distinct("country", {"user_id": user_id, "country": {"$nin": [None, ""]}}))
-    badge_count = await db.spot_winners.count_documents({"user_id": user_id})
-    top_make_rows = await db.scans.aggregate([
-        {"$match": {"user_id": user_id, "make": {"$nin": [None, "", "Unknown"]}}},
-        {"$group": {"_id": "$make", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 1},
-    ]).to_list(1)
+
+    stats = await _profile_stats_for(user_id, target.get("created_at"))
     recent = await db.scans.find(
         {"user_id": user_id},
         {"_id": 0, "image_base64": 1, "scan_id": 1, "make": 1, "model": 1, "rarity": 1, "points": 1, "country_code": 1},
@@ -804,9 +838,7 @@ async def public_profile(user_id: str, user: dict = Depends(get_current_user)):
         "picture": target.get("picture"),
         "total_points": target.get("total_points", 0),
         "scan_count": target.get("scan_count", 0),
-        "countries_count": countries_count,
-        "badge_count": badge_count,
-        "top_make": {"name": top_make_rows[0]["_id"], "count": top_make_rows[0]["count"]} if top_make_rows else None,
+        **stats,
         "recent": recent,
         "is_friend": is_friend,
         "is_self": user_id == user["user_id"],
@@ -864,6 +896,7 @@ async def on_start():
         await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
         await db.scans.create_index([("user_id", 1), ("created_at", -1)])
         await db.scans.create_index([("country", 1)])
+        await db.scans.create_index([("user_id", 1), ("latitude", 1)])
         await db.spot_winners.create_index("week_key", unique=True)
         await db.scan_counters.create_index([("user_id", 1), ("day", 1)], unique=True)
         await db.achievement_completions.create_index("comp_id", unique=True)

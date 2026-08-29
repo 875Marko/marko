@@ -1,16 +1,19 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/src/theme';
 import { ApiError, ProfileApi, ProfileStats } from '@/src/api/client';
 import { ScreenHeader } from '@/src/ui/ScreenHeader';
+import { FactCell, RarityGrid, Section, StatTile } from '@/src/ui/ProfileBits';
 import { useToast } from '@/src/ui/Toast';
 import { useAuth } from '@/src/auth/AuthContext';
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const router = useRouter();
   const { user, signOut } = useAuth();
   const [stats, setStats] = useState<ProfileStats | null>(null);
 
@@ -34,7 +37,13 @@ export default function ProfileScreen() {
       style={styles.container}
       contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 32, paddingHorizontal: theme.spacing.xl }}
     >
-      <ScreenHeader title="Profile" />
+      <View style={styles.headerRow}>
+        <ScreenHeader title="Profile" />
+        <Pressable style={styles.atlasBtn} onPress={() => router.push('/atlas')}>
+          <Ionicons name="globe-outline" size={16} color={theme.color.brand} style={{ marginRight: 6 }} />
+          <Text style={styles.atlasBtnText}>Atlas</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.identity}>
         {user.picture ? (
@@ -65,13 +74,15 @@ export default function ProfileScreen() {
           </Section>
 
           <Section title="Rarity breakdown">
-            <View style={styles.rarityGrid}>
-              {Object.entries(stats.rarity_breakdown).map(([rarity, count]) => (
-                <View key={rarity} style={styles.rarityCell}>
-                  <Text style={styles.rarityCount}>{count}</Text>
-                  <Text style={styles.rarityLabel}>{rarity}</Text>
-                </View>
-              ))}
+            <RarityGrid breakdown={stats.rarity_breakdown} />
+          </Section>
+
+          <Section title="Favorites">
+            <View style={styles.factsGrid}>
+              <FactCell label="Top make" value={stats.top_make?.name} />
+              <FactCell label="Top body style" value={stats.top_body?.name} />
+              <FactCell label="Top color" value={stats.top_color?.name} />
+              <FactCell label="Top origin" value={stats.top_origin?.name} />
             </View>
           </Section>
 
@@ -86,6 +97,7 @@ export default function ProfileScreen() {
           <Section title="Badges & achievements">
             <Text style={styles.bodyText}>
               {stats.badge_count} Spot of the Week badge{stats.badge_count === 1 ? '' : 's'} · {stats.achievement_count} achievement{stats.achievement_count === 1 ? '' : 's'} · {stats.bonus_points_total} bonus pts
+              {stats.days_since_joined ? ` · hunting for ${stats.days_since_joined} day${stats.days_since_joined === 1 ? '' : 's'}` : ''}
             </Text>
           </Section>
         </>
@@ -99,26 +111,15 @@ export default function ProfileScreen() {
   );
 }
 
-function StatTile({ label, value }: { label: string; value: number | string }) {
-  return (
-    <View style={styles.statTile}>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  atlasBtn: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: theme.color.surfaceCard,
+    borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.pill,
+    paddingVertical: 8, paddingHorizontal: 14, marginTop: 2,
+  },
+  atlasBtnText: { color: theme.color.brand, fontWeight: '800', fontSize: 12.5 },
   identity: { alignItems: 'center', marginBottom: theme.spacing.xl },
   avatarWrap: { width: 72, height: 72, borderRadius: 36, marginBottom: theme.spacing.sm },
   avatarFallback: { backgroundColor: theme.color.surfaceRaised, alignItems: 'center', justifyContent: 'center' },
@@ -126,22 +127,8 @@ const styles = StyleSheet.create({
   name: { color: theme.color.onSurface, fontSize: 18, fontWeight: '800' },
   username: { color: theme.color.onSurfaceTertiary, fontSize: 13, marginTop: 2 },
   statRow: { flexDirection: 'row', gap: theme.spacing.sm, marginBottom: theme.spacing.lg },
-  statTile: {
-    flex: 1, alignItems: 'center', backgroundColor: theme.color.surfaceCard, borderRadius: theme.radius.lg,
-    borderWidth: 1, borderColor: theme.color.border, paddingVertical: theme.spacing.md,
-  },
-  statValue: { color: theme.color.brand, fontSize: 20, fontWeight: '900' },
-  statLabel: { color: theme.color.onSurfaceTertiary, fontSize: 11, marginTop: 2 },
-  section: { marginBottom: theme.spacing.lg },
-  sectionTitle: { color: theme.color.onSurfaceSecondary, fontSize: 13, fontWeight: '800', marginBottom: 8, letterSpacing: 0.4 },
   bodyText: { color: theme.color.onSurface, fontSize: 14, lineHeight: 20 },
-  rarityGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
-  rarityCell: {
-    minWidth: 64, alignItems: 'center', backgroundColor: theme.color.surfaceCard, borderRadius: theme.radius.md,
-    borderWidth: 1, borderColor: theme.color.border, paddingVertical: 10, paddingHorizontal: 12,
-  },
-  rarityCount: { color: theme.color.onSurface, fontWeight: '800', fontSize: 15 },
-  rarityLabel: { color: theme.color.onSurfaceTertiary, fontSize: 10, marginTop: 2, textTransform: 'capitalize' },
+  factsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
   signOut: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: theme.spacing.lg,
     paddingVertical: 14, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.color.error,

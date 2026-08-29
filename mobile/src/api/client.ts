@@ -143,7 +143,7 @@ export interface SpotWinner {
   created_at: string;
 }
 
-export interface ProfileStats {
+export interface ProfileStatsCore {
   rarity_breakdown: Record<Rarity, number>;
   top_make: { name: string; count: number } | null;
   top_body: { name: string; count: number } | null;
@@ -154,9 +154,38 @@ export interface ProfileStats {
   achievement_count: number;
   best_scan: { make: string; model: string; rarity: Rarity; year: string | null; points: number } | null;
   bonus_points_total: number;
+  days_since_joined: number | null;
+}
+
+export interface ProfileStats extends ProfileStatsCore {
   scans_remaining_today: number;
   daily_limit: number;
-  days_since_joined: number | null;
+}
+
+export interface PublicProfile extends ProfileStatsCore {
+  user_id: string;
+  username: string | null;
+  name: string | null;
+  picture: string | null;
+  total_points: number;
+  scan_count: number;
+  recent: Partial<ScanResult>[];
+  is_friend: boolean;
+  is_self: boolean;
+}
+
+export interface GlobePin {
+  scan_id: string;
+  user_id: string;
+  make: string;
+  model: string;
+  rarity: Rarity;
+  latitude: number;
+  longitude: number;
+  country: string | null;
+  created_at: string;
+  username?: string | null;
+  name?: string | null;
 }
 
 // ---------- Auth ----------
@@ -200,6 +229,7 @@ export const AtlasApi = {
       total_scans: number;
       recent: ScanResult[];
     }>('/atlas'),
+  globe: () => get<{ mine: GlobePin[]; friends: GlobePin[] }>('/atlas/globe'),
 };
 
 export const SpotOfWeekApi = {
@@ -242,19 +272,5 @@ export const DiscoverApi = {
 
 export const ProfileApi = {
   stats: () => get<ProfileStats>('/profile/stats'),
-  public: (userId: string) =>
-    get<{
-      user_id: string;
-      username: string | null;
-      name: string | null;
-      picture: string | null;
-      total_points: number;
-      scan_count: number;
-      countries_count: number;
-      badge_count: number;
-      top_make: { name: string; count: number } | null;
-      recent: Partial<ScanResult>[];
-      is_friend: boolean;
-      is_self: boolean;
-    }>(`/profile/public/${encodeURIComponent(userId)}`),
+  public: (userId: string) => get<PublicProfile>(`/profile/public/${encodeURIComponent(userId)}`),
 };

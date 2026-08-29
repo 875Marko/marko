@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/src/theme';
-import { ApiError, LeaderboardApi, User } from '@/src/api/client';
+import { ApiError, FriendsApi, LeaderboardApi, User } from '@/src/api/client';
 import { ScreenHeader } from '@/src/ui/ScreenHeader';
 import { useToast } from '@/src/ui/Toast';
 import { useAuth } from '@/src/auth/AuthContext';
@@ -13,10 +15,13 @@ type Scope = 'global' | 'friends';
 export default function LeaderboardScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const router = useRouter();
   const { user } = useAuth();
   const [scope, setScope] = useState<Scope>('global');
   const [users, setUsers] = useState<User[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [addUsername, setAddUsername] = useState('');
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async (s: Scope) => {
     try {
@@ -38,6 +43,22 @@ export default function LeaderboardScreen() {
     setRefreshing(false);
   };
 
+  const addFriend = async () => {
+    const username = addUsername.trim().toLowerCase();
+    if (!username || adding) return;
+    setAdding(true);
+    try {
+      await FriendsApi.add(username);
+      setAddUsername('');
+      toast.show(`Added @${username}`, 'success');
+      if (scope === 'friends') load('friends');
+    } catch (e) {
+      toast.show(e instanceof ApiError ? e.message : 'Could not add that player', 'error');
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
       <View style={styles.headerWrap}>
@@ -55,6 +76,24 @@ export default function LeaderboardScreen() {
             </Pressable>
           ))}
         </View>
+        {scope === 'friends' && (
+          <View style={styles.addRow}>
+            <TextInput
+              style={styles.addInput}
+              placeholder="Add a friend by username"
+              placeholderTextColor={theme.color.onSurfaceTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={addUsername}
+              onChangeText={setAddUsername}
+              onSubmitEditing={addFriend}
+              returnKeyType="done"
+            />
+            <Pressable style={styles.addBtn} onPress={addFriend} disabled={adding}>
+              {adding ? <ActivityIndicator size="small" color={theme.color.onBrand} /> : <Ionicons name="add" size={20} color={theme.color.onBrand} />}
+            </Pressable>
+          </View>
+        )}
       </View>
 
       <FlatList
@@ -64,7 +103,10 @@ export default function LeaderboardScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.color.brand} />}
         ItemSeparatorComponent={() => <View style={{ height: theme.spacing.sm }} />}
         renderItem={({ item, index }) => (
-          <View style={[styles.row, item.user_id === user?.user_id && styles.rowMe]}>
+          <Pressable
+            style={[styles.row, item.user_id === user?.user_id && styles.rowMe]}
+            onPress={() => router.push(`/profile/${item.user_id}`)}
+          >
             <Text style={styles.rank}>{index + 1}</Text>
             {item.picture ? (
               <Image source={{ uri: item.picture }} style={styles.avatar} contentFit="cover" />
@@ -81,12 +123,12 @@ export default function LeaderboardScreen() {
               <Text style={styles.points}>{item.total_points}</Text>
               <Text style={styles.pointsLabel}>pts</Text>
             </View>
-          </View>
+          </Pressable>
         )}
         ListEmptyComponent={
           users ? (
             <Text style={styles.empty}>
-              {scope === 'friends' ? 'Add friends to see them here' : 'No players yet'}
+              {scope === 'friends' ? 'Add friends above to see them here' : 'No players yet'}
             </Text>
           ) : (
             <ActivityIndicator color={theme.color.brand} style={{ marginTop: 40 }} />
@@ -102,12 +144,21 @@ const styles = StyleSheet.create({
   headerWrap: { paddingHorizontal: theme.spacing.xl },
   segments: {
     flexDirection: 'row', backgroundColor: theme.color.surfaceCard, borderRadius: theme.radius.pill,
-    padding: 4, marginBottom: theme.spacing.lg, borderWidth: 1, borderColor: theme.color.border,
+    padding: 4, marginBottom: theme.spacing.md, borderWidth: 1, borderColor: theme.color.border,
   },
   segment: { flex: 1, paddingVertical: 10, borderRadius: theme.radius.pill, alignItems: 'center' },
   segmentActive: { backgroundColor: theme.color.brand },
   segmentText: { color: theme.color.onSurfaceTertiary, fontWeight: '800', fontSize: 13 },
   segmentTextActive: { color: theme.color.onBrand },
+  addRow: { flexDirection: 'row', gap: 8, marginBottom: theme.spacing.lg },
+  addInput: {
+    flex: 1, height: 42, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: theme.color.surfaceCard, color: theme.color.onSurface, paddingHorizontal: 14, fontSize: 13,
+  },
+  addBtn: {
+    width: 42, height: 42, borderRadius: theme.radius.md, backgroundColor: theme.color.brand,
+    alignItems: 'center', justifyContent: 'center',
+  },
   listContent: { paddingHorizontal: theme.spacing.xl, paddingBottom: 32 },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md,
