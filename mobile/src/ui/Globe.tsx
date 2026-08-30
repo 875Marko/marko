@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useReducer, useRef } from 'react';
 import { PanResponder, View } from 'react-native';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { theme } from '@/src/theme';
@@ -11,26 +11,47 @@ export interface GlobeMarker {
   lng: number;
 }
 
+export interface GlobeHandle {
+  resetZoom: () => void;
+}
+
 interface GlobeProps {
   size: number;
   mine: GlobeMarker[];
   friends: GlobeMarker[];
   onMarkerPress?: (id: string, source: 'mine' | 'friends') => void;
+  onZoomChange?: (zoom: number) => void;
 }
 
 const AUTO_ROTATE_STEP = 0.006;
 const AUTO_ROTATE_INTERVAL_MS = 50;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 3.5;
 
-export function Globe({ size, mine, friends, onMarkerPress }: GlobeProps) {
+export const Globe = forwardRef<GlobeHandle, GlobeProps>(function Globe(
+  { size, mine, friends, onMarkerPress, onZoomChange },
+  ref
+) {
   const yaw = useRef(0.5);
   const pitch = useRef(-0.3);
+  const zoom = useRef(1);
   const dragging = useRef(false);
   const dragStart = useRef({ yaw: 0, pitch: 0 });
+  const pinching = useRef(false);
+  const pinchStart = useRef({ distance: 0, zoom: 1 });
   const [, forceRender] = useReducer((c: number) => c + 1, 0);
+
+  useImperativeHandle(ref, () => ({
+    resetZoom: () => {
+      zoom.current = 1;
+      onZoomChange?.(1);
+      forceRender();
+    },
+  }));
 
   useEffect(() => {
     const id = setInterval(() => {
-      if (!dragging.current) {
+      if (!dragging.current && !pinching.current) {
         yaw.current += AUTO_ROTATE_STEP;
         forceRender();
       }
@@ -44,23 +65,49 @@ export function Globe({ size, mine, friends, onMarkerPress }: GlobeProps) {
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         dragging.current = true;
+        pinching.current = false;
         dragStart.current = { yaw: yaw.current, pitch: pitch.current };
       },
-      onPanResponderMove: (_evt, gesture) => {
+      onPanResponderMove: (evt, gesture) => {
+        const touches = evt.nativeEvent.touches;
+        if (touches.length === 2) {
+          const [a, b] = touches;
+          const distance = Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY);
+          if (!pinching.current) {
+            // Entering a pinch mid-gesture — baseline against this distance
+            // and the zoom level as it stood a moment ago.
+            pinching.current = true;
+            pinchStart.current = { distance, zoom: zoom.current };
+          } else {
+            zoom.current = clamp(pinchStart.current.zoom * (distance / pinchStart.current.distance), MIN_ZOOM, MAX_ZOOM);
+            onZoomChange?.(zoom.current);
+          }
+          forceRender();
+          return;
+        }
+        // Dropping back to one finger after a pinch: re-baseline rotation
+        // from the current orientation so it doesn't jump.
+        if (pinching.current) {
+          pinching.current = false;
+          dragStart.current = { yaw: yaw.current, pitch: pitch.current };
+          return;
+        }
         yaw.current = dragStart.current.yaw + gesture.dx * 0.006;
         pitch.current = clamp(dragStart.current.pitch - gesture.dy * 0.006, -1.3, 1.3);
         forceRender();
       },
       onPanResponderRelease: () => {
         dragging.current = false;
+        pinching.current = false;
       },
       onPanResponderTerminate: () => {
         dragging.current = false;
+        pinching.current = false;
       },
     })
   ).current;
 
-  const radius = size / 2 - 6;
+  const radius = (size / 2 - 6) * zoom.current;
   const cx = size / 2;
   const cy = size / 2;
 
@@ -93,7 +140,7 @@ export function Globe({ size, mine, friends, onMarkerPress }: GlobeProps) {
         <Circle cx={cx} cy={cy} r={radius} fill="url(#globeShade)" stroke={theme.color.border} strokeWidth={1} />
 
         {projectedLand.map((p, idx) => (
-          <Circle key={`land-${idx}`} cx={p.x} cy={p.y} r={1.3} fill={theme.color.success} opacity={0.3 + p.z * 0.5} />
+          <Circle key={`land-${idx}`} cx={p.x} cy={p.y} r={1.3 * Math.min(zoom.current, 1.8)} fill={theme.color.success} opacity={0.3 + p.z * 0.5} />
         ))}
 
         {friendPins.map(({ marker, p }) => (
@@ -126,4 +173,4 @@ export function Globe({ size, mine, friends, onMarkerPress }: GlobeProps) {
       </Svg>
     </View>
   );
-}
+});

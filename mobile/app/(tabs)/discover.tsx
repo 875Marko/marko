@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/src/theme';
 import { ApiError, AtlasApi, AtlasCountry, DiscoverApi, GlobePin } from '@/src/api/client';
-import { Globe } from '@/src/ui/Globe';
+import { Globe, GlobeHandle } from '@/src/ui/Globe';
+import { RegionMap } from '@/src/ui/RegionMap';
+import { MapPin } from '@/src/lib/leafletHtml';
 import { RarityBadge } from '@/src/ui/RarityBadge';
 import { ScanCard } from '@/src/ui/ScanCard';
 import { ScreenHeader } from '@/src/ui/ScreenHeader';
@@ -12,11 +15,14 @@ import { useToast } from '@/src/ui/Toast';
 
 type Spot = Awaited<ReturnType<typeof DiscoverApi.list>>['spots'][number];
 
+const MAP_ZOOM_THRESHOLD = 2.2;
+
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const globeRef = useRef<GlobeHandle>(null);
 
   const [mine, setMine] = useState<GlobePin[]>([]);
   const [friends, setFriends] = useState<GlobePin[]>([]);
@@ -24,6 +30,7 @@ export default function DiscoverScreen() {
   const [selected, setSelected] = useState<{ pin: GlobePin; source: 'mine' | 'friends' } | null>(null);
   const [spots, setSpots] = useState<Spot[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showMap, setShowMap] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +62,23 @@ export default function DiscoverScreen() {
     if (pin) setSelected({ pin, source });
   };
 
+  const handleZoomChange = (zoom: number) => {
+    if (zoom >= MAP_ZOOM_THRESHOLD && !showMap) setShowMap(true);
+  };
+
+  const backToGlobe = () => {
+    setShowMap(false);
+    globeRef.current?.resetZoom();
+  };
+
+  const regionPins: MapPin[] = [
+    ...mine.map((p) => ({ lat: p.latitude, lng: p.longitude, make: p.make, model: p.model, color: theme.color.brand })),
+    ...friends.map((p) => ({
+      lat: p.latitude, lng: p.longitude, make: p.make, model: p.model,
+      color: theme.color.rarity.rare, username: p.username, userId: p.user_id,
+    })),
+  ];
+
   const globeSize = Math.min(320, width - theme.spacing.xl * 2);
 
   return (
@@ -67,14 +91,26 @@ export default function DiscoverScreen() {
         <ScreenHeader title="Discover" subtitle="Where you and your friends have been spotting" />
       </View>
 
-      <View style={styles.globeWrap}>
-        <Globe
-          size={globeSize}
-          mine={mine.map((p) => ({ id: p.scan_id, lat: p.latitude, lng: p.longitude }))}
-          friends={friends.map((p) => ({ id: p.scan_id, lat: p.latitude, lng: p.longitude }))}
-          onMarkerPress={handleMarkerPress}
-        />
-      </View>
+      {showMap ? (
+        <View style={[styles.mapWrap, { height: globeSize + 60 }]}>
+          <RegionMap pins={regionPins} onOpenProfile={(userId) => router.push(`/profile/${userId}`)} />
+          <Pressable style={styles.backToGlobeBtn} onPress={backToGlobe}>
+            <Ionicons name="globe-outline" size={14} color={theme.color.onSurface} style={{ marginRight: 6 }} />
+            <Text style={styles.backToGlobeText}>Back to globe</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.globeWrap}>
+          <Globe
+            ref={globeRef}
+            size={globeSize}
+            mine={mine.map((p) => ({ id: p.scan_id, lat: p.latitude, lng: p.longitude }))}
+            friends={friends.map((p) => ({ id: p.scan_id, lat: p.latitude, lng: p.longitude }))}
+            onMarkerPress={handleMarkerPress}
+            onZoomChange={handleZoomChange}
+          />
+        </View>
+      )}
 
       <View style={styles.legendRow}>
         <View style={styles.legendItem}>
@@ -86,7 +122,9 @@ export default function DiscoverScreen() {
           <Text style={styles.legendText}>Friends' scans ({friends.length})</Text>
         </View>
       </View>
-      <Text style={styles.hint}>Drag to rotate the globe · tap a pin for details</Text>
+      <Text style={styles.hint}>
+        {showMap ? 'Pan and zoom the map · tap a pin for details' : 'Drag to rotate · pinch to zoom into a real map · tap a pin for details'}
+      </Text>
 
       {selected && (
         <View style={styles.selectedCard}>
@@ -155,6 +193,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
   headerWrap: { paddingHorizontal: theme.spacing.xl },
   globeWrap: { alignItems: 'center', marginTop: theme.spacing.sm, marginBottom: theme.spacing.md },
+  mapWrap: {
+    marginHorizontal: theme.spacing.xl, marginTop: theme.spacing.sm, marginBottom: theme.spacing.md,
+    borderRadius: theme.radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: theme.color.border,
+  },
+  backToGlobeBtn: {
+    position: 'absolute', top: 10, left: 10, flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(15,17,21,0.75)', borderRadius: theme.radius.pill,
+    paddingVertical: 7, paddingHorizontal: 12, zIndex: 10,
+  },
+  backToGlobeText: { color: theme.color.onSurface, fontWeight: '700', fontSize: 11.5 },
   legendRow: { flexDirection: 'row', justifyContent: 'center', gap: theme.spacing.lg, marginBottom: 6 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 8, height: 8, borderRadius: 4 },
