@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/src/theme';
 import { ApiError, ProfileApi, ProfileStats } from '@/src/api/client';
@@ -13,7 +12,6 @@ import { useAuth } from '@/src/auth/AuthContext';
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const router = useRouter();
   const { user, signOut } = useAuth();
   const [stats, setStats] = useState<ProfileStats | null>(null);
 
@@ -37,13 +35,7 @@ export default function ProfileScreen() {
       style={styles.container}
       contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 32, paddingHorizontal: theme.spacing.xl }}
     >
-      <View style={styles.headerRow}>
-        <ScreenHeader title="Profile" />
-        <Pressable style={styles.atlasBtn} onPress={() => router.push('/atlas')}>
-          <Ionicons name="globe-outline" size={16} color={theme.color.brand} style={{ marginRight: 6 }} />
-          <Text style={styles.atlasBtnText}>Atlas</Text>
-        </Pressable>
-      </View>
+      <ScreenHeader title="Profile" />
 
       <View style={styles.identity}>
         {user.picture ? (
@@ -113,13 +105,6 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
-  atlasBtn: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: theme.color.surfaceCard,
-    borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.pill,
-    paddingVertical: 8, paddingHorizontal: 14, marginTop: 2,
-  },
-  atlasBtnText: { color: theme.color.brand, fontWeight: '800', fontSize: 12.5 },
   identity: { alignItems: 'center', marginBottom: theme.spacing.xl },
   avatarWrap: { width: 72, height: 72, borderRadius: 36, marginBottom: theme.spacing.sm },
   avatarFallback: { backgroundColor: theme.color.surfaceRaised, alignItems: 'center', justifyContent: 'center' },

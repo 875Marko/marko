@@ -11,6 +11,8 @@ import { useToast } from '@/src/ui/Toast';
 import { useAuth } from '@/src/auth/AuthContext';
 import { setLastScanResult } from '@/src/state/scanResultStore';
 
+const CAMERA_SUPPORTED = Platform.OS !== 'web';
+
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -21,7 +23,7 @@ export default function ScanScreen() {
 
   const runScan = async (asset: ImagePicker.ImagePickerAsset) => {
     if (!asset.base64) {
-      toast.show('Could not read that image, try another', 'error');
+      toast.show('Could not read that photo, try again', 'error');
       return;
     }
     setPreviewUri(asset.uri);
@@ -40,21 +42,15 @@ export default function ScanScreen() {
     }
   };
 
-  const pick = async (source: 'camera' | 'library') => {
-    const permission =
-      source === 'camera'
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const takePhoto = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      toast.show('Permission needed to continue', 'error');
+      toast.show('Camera permission needed to scan', 'error');
       return;
     }
-
-    const result =
-      source === 'camera'
-        ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.7 })
-        : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.7 });
-
+    // No library picker on purpose: scans must come from a live camera
+    // capture, not an existing photo, to keep the leaderboard honest.
+    const result = await ImagePicker.launchCameraAsync({ base64: true, quality: 0.7 });
     if (result.canceled || !result.assets?.[0]) return;
     await runScan(result.assets[0]);
   };
@@ -63,7 +59,7 @@ export default function ScanScreen() {
     <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <Text style={styles.kicker}>SCAN. COLLECT. COMPETE.</Text>
       <Text style={styles.title}>Spot a car</Text>
-      <Text style={styles.subtitle}>Snap or upload a clear photo and let the AI identify it.</Text>
+      <Text style={styles.subtitle}>Point your camera at a real car and let the AI identify it live.</Text>
 
       <View style={styles.previewFrame}>
         {previewUri ? (
@@ -82,24 +78,22 @@ export default function ScanScreen() {
       </View>
 
       <View style={styles.actions}>
-        {Platform.OS !== 'web' && (
+        {CAMERA_SUPPORTED ? (
           <Pressable
             style={({ pressed }) => [styles.cta, pressed && { opacity: 0.85 }]}
-            onPress={() => pick('camera')}
+            onPress={takePhoto}
             disabled={busy}
           >
             <Ionicons name="camera" size={18} color={theme.color.onBrand} style={styles.ctaIcon} />
             <Text style={styles.ctaText}>Take Photo</Text>
           </Pressable>
+        ) : (
+          <View style={styles.webNotice}>
+            <Ionicons name="phone-portrait-outline" size={18} color={theme.color.onSurfaceTertiary} style={styles.ctaIcon} />
+            <Text style={styles.webNoticeText}>Live camera scanning requires the iOS or Android app.</Text>
+          </View>
         )}
-        <Pressable
-          style={({ pressed }) => [styles.secondaryCta, pressed && { opacity: 0.85 }]}
-          onPress={() => pick('library')}
-          disabled={busy}
-        >
-          <Ionicons name="images" size={18} color={theme.color.onSurface} style={styles.ctaIcon} />
-          <Text style={styles.secondaryCtaText}>Choose from Library</Text>
-        </Pressable>
+        <Text style={styles.liveOnlyNote}>Live capture only — photo uploads aren't accepted, to keep spots honest.</Text>
       </View>
     </View>
   );
@@ -137,10 +131,11 @@ const styles = StyleSheet.create({
   },
   ctaIcon: { marginRight: 10 },
   ctaText: { color: theme.color.onBrand, fontSize: 16, fontWeight: '800' },
-  secondaryCta: {
+  webNotice: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     backgroundColor: theme.color.surfaceRaised, paddingVertical: 16, borderRadius: theme.radius.lg,
     borderWidth: 1, borderColor: theme.color.border,
   },
-  secondaryCtaText: { color: theme.color.onSurface, fontSize: 16, fontWeight: '700' },
+  webNoticeText: { color: theme.color.onSurfaceTertiary, fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  liveOnlyNote: { color: theme.color.onSurfaceTertiary, fontSize: 11.5, textAlign: 'center' },
 });

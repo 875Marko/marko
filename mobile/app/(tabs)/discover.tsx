@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/src/theme';
-import { ApiError, DiscoverApi } from '@/src/api/client';
+import { ApiError, AtlasApi, AtlasCountry, DiscoverApi, GlobePin } from '@/src/api/client';
+import { Globe } from '@/src/ui/Globe';
+import { RarityBadge } from '@/src/ui/RarityBadge';
 import { ScanCard } from '@/src/ui/ScanCard';
 import { ScreenHeader } from '@/src/ui/ScreenHeader';
 import { useToast } from '@/src/ui/Toast';
@@ -14,13 +16,24 @@ export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+
+  const [mine, setMine] = useState<GlobePin[]>([]);
+  const [friends, setFriends] = useState<GlobePin[]>([]);
+  const [countries, setCountries] = useState<AtlasCountry[] | null>(null);
+  const [selected, setSelected] = useState<{ pin: GlobePin; source: 'mine' | 'friends' } | null>(null);
   const [spots, setSpots] = useState<Spot[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await DiscoverApi.list();
-      setSpots(res.spots);
+      const [globeRes, atlasRes, discoverRes] = await Promise.all([
+        AtlasApi.globe(), AtlasApi.get(), DiscoverApi.list(),
+      ]);
+      setMine(globeRes.mine);
+      setFriends(globeRes.friends);
+      setCountries(atlasRes.countries);
+      setSpots(discoverRes.spots);
     } catch (e) {
       toast.show(e instanceof ApiError ? e.message : 'Could not load Discover', 'error');
     }
@@ -36,42 +49,135 @@ export default function DiscoverScreen() {
     setRefreshing(false);
   };
 
+  const handleMarkerPress = (id: string, source: 'mine' | 'friends') => {
+    const pool = source === 'mine' ? mine : friends;
+    const pin = pool.find((p) => p.scan_id === id);
+    if (pin) setSelected({ pin, source });
+  };
+
+  const globeSize = Math.min(320, width - theme.spacing.xl * 2);
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 32 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.color.brand} />}
+    >
       <View style={styles.headerWrap}>
-        <ScreenHeader title="Discover" subtitle="Rare, epic & legendary spots from the last 30 days" />
+        <ScreenHeader title="Discover" subtitle="Where you and your friends have been spotting" />
       </View>
-      <FlatList
-        data={spots ?? []}
-        keyExtractor={(item) => item.scan_id}
-        contentContainerStyle={styles.listContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.color.brand} />}
-        ItemSeparatorComponent={() => <View style={{ height: theme.spacing.md }} />}
-        renderItem={({ item }) => (
-          <ScanCard
-            imageBase64={item.image_base64}
-            title={`${item.make} ${item.model}`}
-            subtitle={item.hunter_username ? `spotted by @${item.hunter_username}` : item.country}
-            rarity={item.rarity}
-            points={item.points}
-            onPress={() => router.push(`/profile/${item.user_id}`)}
-          />
+
+      <View style={styles.globeWrap}>
+        <Globe
+          size={globeSize}
+          mine={mine.map((p) => ({ id: p.scan_id, lat: p.latitude, lng: p.longitude }))}
+          friends={friends.map((p) => ({ id: p.scan_id, lat: p.latitude, lng: p.longitude }))}
+          onMarkerPress={handleMarkerPress}
+        />
+      </View>
+
+      <View style={styles.legendRow}>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendDot, { backgroundColor: theme.color.brand }]} />
+          <Text style={styles.legendText}>Your scans ({mine.length})</Text>
+        </View>
+        <View style={styles.legendItem}>
+          <View style={[styles.legendDot, { backgroundColor: theme.color.rarity.rare }]} />
+          <Text style={styles.legendText}>Friends' scans ({friends.length})</Text>
+        </View>
+      </View>
+      <Text style={styles.hint}>Drag to rotate the globe · tap a pin for details</Text>
+
+      {selected && (
+        <View style={styles.selectedCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.selectedTitle}>{selected.pin.make} {selected.pin.model}</Text>
+            <Text style={styles.selectedSub}>
+              {selected.source === 'friends' && selected.pin.username ? `@${selected.pin.username} · ` : ''}
+              {selected.pin.country ?? 'Unknown location'}
+            </Text>
+            <View style={{ marginTop: 8 }}>
+              <RarityBadge rarity={selected.pin.rarity} size="sm" />
+            </View>
+          </View>
+          {selected.source === 'friends' && (
+            <Pressable style={styles.viewProfileBtn} onPress={() => router.push(`/profile/${selected.pin.user_id}`)}>
+              <Text style={styles.viewProfileText}>Profile</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Countries visited</Text>
+        {!countries || countries.length === 0 ? (
+          <Text style={styles.empty}>No located scans yet — location tags on your scans will show up here.</Text>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {countries.map((c) => (
+              <View key={`${c.country}-${c.code}`} style={styles.countryRow}>
+                <Text style={styles.countryCode}>{c.code ?? '—'}</Text>
+                <Text style={styles.countryName} numberOfLines={1}>{c.country}</Text>
+                <Text style={styles.countryCount}>{c.count}</Text>
+              </View>
+            ))}
+          </View>
         )}
-        ListEmptyComponent={
-          spots ? (
-            <Text style={styles.empty}>Nothing rare spotted recently — be the first!</Text>
-          ) : (
-            <ActivityIndicator color={theme.color.brand} style={{ marginTop: 40 }} />
-          )
-        }
-      />
-    </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Rare, epic & legendary spots</Text>
+        {!spots ? (
+          <ActivityIndicator color={theme.color.brand} style={{ marginTop: 12 }} />
+        ) : spots.length === 0 ? (
+          <Text style={styles.empty}>Nothing rare spotted recently — be the first!</Text>
+        ) : (
+          <View style={{ gap: theme.spacing.md }}>
+            {spots.map((item) => (
+              <ScanCard
+                key={item.scan_id}
+                imageBase64={item.image_base64}
+                title={`${item.make} ${item.model}`}
+                subtitle={item.hunter_username ? `spotted by @${item.hunter_username}` : item.country}
+                rarity={item.rarity}
+                points={item.points}
+                onPress={() => router.push(`/profile/${item.user_id}`)}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
   headerWrap: { paddingHorizontal: theme.spacing.xl },
-  listContent: { paddingHorizontal: theme.spacing.xl, paddingBottom: 32 },
-  empty: { color: theme.color.onSurfaceTertiary, textAlign: 'center', marginTop: 60 },
+  globeWrap: { alignItems: 'center', marginTop: theme.spacing.sm, marginBottom: theme.spacing.md },
+  legendRow: { flexDirection: 'row', justifyContent: 'center', gap: theme.spacing.lg, marginBottom: 6 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { color: theme.color.onSurfaceSecondary, fontSize: 12, fontWeight: '600' },
+  hint: { color: theme.color.onSurfaceTertiary, fontSize: 11, textAlign: 'center', marginBottom: theme.spacing.lg },
+  selectedCard: {
+    flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md, marginHorizontal: theme.spacing.xl,
+    backgroundColor: theme.color.surfaceCard, borderWidth: 1, borderColor: theme.color.border,
+    borderRadius: theme.radius.lg, padding: theme.spacing.md, marginBottom: theme.spacing.lg,
+  },
+  selectedTitle: { color: theme.color.onSurface, fontWeight: '800', fontSize: 14 },
+  selectedSub: { color: theme.color.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
+  viewProfileBtn: { backgroundColor: theme.color.brand, borderRadius: theme.radius.pill, paddingVertical: 8, paddingHorizontal: 14 },
+  viewProfileText: { color: theme.color.onBrand, fontWeight: '800', fontSize: 12 },
+  section: { paddingHorizontal: theme.spacing.xl, marginBottom: theme.spacing.lg },
+  sectionTitle: { color: theme.color.onSurfaceSecondary, fontSize: 13, fontWeight: '800', marginBottom: 10, letterSpacing: 0.4 },
+  empty: { color: theme.color.onSurfaceTertiary, fontSize: 13 },
+  countryRow: {
+    flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm,
+    backgroundColor: theme.color.surfaceCard, borderWidth: 1, borderColor: theme.color.border,
+    borderRadius: theme.radius.md, paddingVertical: 10, paddingHorizontal: 14,
+  },
+  countryCode: { color: theme.color.brand, fontWeight: '800', fontSize: 12, width: 32 },
+  countryName: { flex: 1, color: theme.color.onSurface, fontSize: 13, fontWeight: '600' },
+  countryCount: { color: theme.color.onSurfaceTertiary, fontSize: 12, fontWeight: '700' },
 });

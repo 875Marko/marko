@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useReducer, useRef } from 'react';
+import React, { useEffect, useReducer, useRef } from 'react';
 import { PanResponder, View } from 'react-native';
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { theme } from '@/src/theme';
+import { LAND_DOTS } from '@/src/data/landDots';
 import { clamp, latLngToVec3, project, rotateVec3 } from '@/src/lib/sphere';
 
 export interface GlobeMarker {
@@ -17,8 +18,6 @@ interface GlobeProps {
   onMarkerPress?: (id: string, source: 'mine' | 'friends') => void;
 }
 
-const GRID_LATS = [-80, -60, -40, -20, 0, 20, 40, 60, 80];
-const GRID_LNGS = Array.from({ length: 18 }, (_, i) => i * 20);
 const AUTO_ROTATE_STEP = 0.006;
 const AUTO_ROTATE_INTERVAL_MS = 50;
 
@@ -61,23 +60,13 @@ export function Globe({ size, mine, friends, onMarkerPress }: GlobeProps) {
     })
   ).current;
 
-  const gridPoints = useMemo(() => {
-    const pts: { lat: number; lng: number }[] = [];
-    for (const lat of GRID_LATS) {
-      for (const lng of GRID_LNGS) {
-        pts.push({ lat, lng });
-      }
-    }
-    return pts;
-  }, []);
-
   const radius = size / 2 - 6;
   const cx = size / 2;
   const cy = size / 2;
 
-  const projectedGrid = gridPoints
-    .map((p) => project(rotateVec3(latLngToVec3(p.lat, p.lng), yaw.current, pitch.current), radius, cx, cy))
-    .filter((p) => p.z > 0.05);
+  const projectedLand = LAND_DOTS
+    .map(([lat, lng]) => project(rotateVec3(latLngToVec3(lat, lng), yaw.current, pitch.current), radius, cx, cy))
+    .filter((p) => p.z > 0.04);
 
   const projectMarkers = (markers: GlobeMarker[], source: 'mine' | 'friends') =>
     markers
@@ -103,8 +92,8 @@ export function Globe({ size, mine, friends, onMarkerPress }: GlobeProps) {
 
         <Circle cx={cx} cy={cy} r={radius} fill="url(#globeShade)" stroke={theme.color.border} strokeWidth={1} />
 
-        {projectedGrid.map((p, idx) => (
-          <Circle key={`grid-${idx}`} cx={p.x} cy={p.y} r={1.1} fill={theme.color.onSurfaceTertiary} opacity={0.35 + p.z * 0.3} />
+        {projectedLand.map((p, idx) => (
+          <Circle key={`land-${idx}`} cx={p.x} cy={p.y} r={1.3} fill={theme.color.success} opacity={0.3 + p.z * 0.5} />
         ))}
 
         {friendPins.map(({ marker, p }) => (
