@@ -93,7 +93,7 @@ export const Globe = forwardRef<GlobeHandle, GlobeProps>(function Globe(
           return;
         }
         yaw.current = dragStart.current.yaw + gesture.dx * 0.006;
-        pitch.current = clamp(dragStart.current.pitch - gesture.dy * 0.006, -1.3, 1.3);
+        pitch.current = clamp(dragStart.current.pitch + gesture.dy * 0.006, -1.3, 1.3);
         forceRender();
       },
       onPanResponderRelease: () => {
