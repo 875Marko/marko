@@ -9,6 +9,7 @@ import os
 import re
 import json
 import uuid
+import base64
 import secrets
 import logging
 from pathlib import Path
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from datetime import datetime, timezone, timedelta
 
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+import anthropic
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -25,7 +26,8 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+SCAN_MODEL = "claude-opus-5"
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -250,6 +252,25 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
+def _detect_image_media_type(image_b64: str) -> str:
+    """Sniff the image format from its magic bytes rather than assuming JPEG —
+    the client (camera capture) usually sends JPEG, but this keeps the
+    Anthropic vision request's declared media_type accurate either way."""
+    try:
+        header = base64.b64decode(image_b64[:16])
+    except Exception:
+        return "image/jpeg"
+    if header.startswith(b"\xff\xd8"):
+        return "image/jpeg"
+    if header.startswith(b"\x89PNG"):
+        return "image/png"
+    if header.startswith(b"GIF8"):
+        return "image/gif"
+    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
 DAILY_SCAN_LIMIT = 10
 MAX_IMAGE_B64_CHARS = 12_000_000  # ~9MB decoded — generous headroom for a phone photo
 
@@ -284,7 +305,7 @@ async def _release_daily_scan_slot(user_id: str, day_key: str) -> None:
 
 @api_router.post("/scan")
 async def scan_car(body: ScanCreate, user: dict = Depends(get_current_user)):
-    if not EMERGENT_LLM_KEY:
+    if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="LLM key not configured")
 
     image_b64 = body.image_base64
@@ -299,22 +320,32 @@ async def scan_car(body: ScanCreate, user: dict = Depends(get_current_user)):
     slot_reserved = True
 
     try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"scan_{uuid.uuid4().hex[:8]}",
-            system_message=SCAN_SYSTEM_PROMPT,
-        ).with_model("openai", "gpt-5.2")
-
-        msg = UserMessage(
-            text="Identify the car in this image and respond with the JSON schema only.",
-            file_contents=[ImageContent(image_base64=image_b64)],
-        )
+        media_type = _detect_image_media_type(image_b64)
+        anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
         try:
-            response_text = await chat.send_message(msg)
-        except Exception as e:
+            response = await anthropic_client.messages.create(
+                model=SCAN_MODEL,
+                max_tokens=1024,
+                system=SCAN_SYSTEM_PROMPT,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
+                        {"type": "text", "text": "Identify the car in this image and respond with the JSON schema only."},
+                    ],
+                }],
+            )
+        except anthropic.APIStatusError as e:
             logger.exception("LLM error")
-            raise HTTPException(status_code=502, detail=f"AI identify failed: {e}") from e
+            raise HTTPException(status_code=502, detail=f"AI identify failed: {e.message}") from e
+        except anthropic.APIConnectionError as e:
+            logger.exception("LLM error")
+            raise HTTPException(status_code=502, detail="AI identify failed: could not reach the AI service") from e
+
+        if response.stop_reason == "refusal":
+            raise HTTPException(status_code=422, detail="The AI declined to analyze this image. Try a different photo.")
+        response_text = next((b.text for b in response.content if b.type == "text"), "")
 
         try:
             data = _extract_json(response_text)

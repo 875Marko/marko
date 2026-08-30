@@ -5,3 +5,7 @@ web-build/
 *.log
 .DS_Store
 expo-env.d.ts
+.env
+.env.local
+.env.production.local
+.env.development.local

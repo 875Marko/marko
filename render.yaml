@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: car-spotter-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: car_spotter
+      - key: ANTHROPIC_API_KEY
+        sync: false

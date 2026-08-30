@@ -1,7 +1,12 @@
 import Constants from 'expo-constants';
 
+// EXPO_PUBLIC_ vars are inlined per build by Metro (set per EAS build profile
+// in eas.json) — that's the primary way to point a build at a real backend.
+// app.json's extra.apiBaseUrl / the localhost default are just the local-dev fallback.
 const API_BASE_URL: string =
-  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ?? 'http://localhost:8000/api';
+  process.env.EXPO_PUBLIC_API_BASE_URL ??
+  (Constants.expoConfig?.extra?.apiBaseUrl as string | undefined) ??
+  'http://localhost:8000/api';
 
 export class ApiError extends Error {
   status: number;
